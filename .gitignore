@@ -1,0 +1,21 @@
+# Virtual environment
+venv/
+
+# ChromaDB vector store (auto-generated on first run)
+chroma_db/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables (contains GitHub token — NEVER push this)
+.env
+
+# Nested git projects
+Work-Evaluation-System/
+
+# OS files
+.DS_Store
+Thumbs.db
