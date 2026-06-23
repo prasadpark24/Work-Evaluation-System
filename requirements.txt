@@ -8,3 +8,4 @@ streamlit
 pypdf
 mcp[cli]
 PyGithub
+python-dotenv

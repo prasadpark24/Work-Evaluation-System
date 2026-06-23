@@ -1,3 +1,10 @@
+import os
+os.environ.setdefault('STREAMLIT_LOGGER_LEVEL', 'debug')
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
@@ -6,7 +13,15 @@ from ollama import chat
 from mcp_client import EmployeeMCPClient
 import streamlit as st
 import json
-import os
+
+from config import (
+    CHROMA_DB_DIR, EMBED_MODEL, LLM_MODEL, CHUNK_SIZE, CHUNK_OVERLAP,
+    RAG_TOP_K, PDF_FILE, DEFAULT_EMPLOYEE_ID, DEFAULT_MONTH, 
+    DEFAULT_QUARTER, DEFAULT_YEAR
+)
+from logger_setup import get_logger
+
+logger = get_logger()
 
 
 st.set_page_config(
@@ -18,18 +33,27 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────────────────────────
 # RAG — cached vectorstore
 # ─────────────────────────────────────────────────────────────────────────────
-CHROMA_DIR = "chroma_db"
-EMBED_MODEL = "nomic-embed-text"
-
 @st.cache_resource(show_spinner="Setting up knowledge base...")
 def load_vectorstore():
-    embeddings = OllamaEmbeddings(model=EMBED_MODEL)
-    if os.path.exists(CHROMA_DIR) and os.listdir(CHROMA_DIR):
-        return Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-    docs = PyPDFLoader("employee_details.pdf").load()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=1500)
-    chunks = splitter.split_documents(docs)
-    return Chroma.from_documents(chunks, embeddings, persist_directory=CHROMA_DIR)
+    try:
+        embeddings = OllamaEmbeddings(model=EMBED_MODEL)
+        if CHROMA_DB_DIR.exists() and list(CHROMA_DB_DIR.glob("*")):
+            logger.info("Loading existing vectorstore from cache")
+            return Chroma(persist_directory=str(CHROMA_DB_DIR), embedding_function=embeddings)
+        
+        logger.info(f"Creating new vectorstore from {PDF_FILE}")
+        if not PDF_FILE.exists():
+            logger.warning(f"PDF file not found: {PDF_FILE}")
+            return None
+        
+        docs = PyPDFLoader(str(PDF_FILE)).load()
+        splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+        chunks = splitter.split_documents(docs)
+        logger.info(f"Created {len(chunks)} chunks from PDF")
+        return Chroma.from_documents(chunks, embeddings, persist_directory=str(CHROMA_DB_DIR))
+    except Exception as e:
+        logger.error(f"Error loading vectorstore: {e}")
+        return None
 
 @st.cache_resource
 def get_mcp_client():
@@ -42,28 +66,41 @@ mcp = get_mcp_client()
 # RAG helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def retrieve(query: str) -> str:
-    results = vectorstore.similarity_search(query, k=3)
-    return "\n\n".join([doc.page_content for doc in results])
+    try:
+        if vectorstore is None:
+            logger.warning("Vectorstore not available")
+            return "Knowledge base not available."
+        results = vectorstore.similarity_search(query, k=RAG_TOP_K)
+        return "\n\n".join([doc.page_content for doc in results])
+    except Exception as e:
+        logger.error(f"Error retrieving context: {e}")
+        return ""
 
 def generate_answer(query: str, context: str, mcp_context: str = "") -> str:
-    full_context = context
-    if mcp_context:
-        full_context += f"\n\n--- Live Employee MCP Data ---\n{mcp_context}"
-    response = chat(
-        model="llama3.2:latest",
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "You are an expert HR AI assistant. Answer the question using "
-                    "the provided document context and live employee data.\n\n"
-                    f"Context:\n{full_context}"
-                ),
-            },
-            {"role": "user", "content": query},
-        ],
-    )
-    return response["message"]["content"]
+    try:
+        full_context = context
+        if mcp_context:
+            full_context += f"\n\n--- Live Employee MCP Data ---\n{mcp_context}"
+        
+        response = chat(
+            model=LLM_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "You are an expert HR AI assistant. Answer the question using "
+                        "the provided document context and live employee data.\n\n"
+                        f"Context:\n{full_context}"
+                    ),
+                },
+                {"role": "user", "content": query},
+            ],
+        )
+        logger.info(f"Generated answer for query: {query[:50]}...")
+        return response["message"]["content"]
+    except Exception as e:
+        logger.error(f"Error generating answer: {e}")
+        return f"Error generating answer: {str(e)}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Sidebar — Employee Inputs
@@ -72,9 +109,10 @@ with st.sidebar:
     st.title("🔧 Employee Details")
     st.markdown("---")
 
-    employee_id = st.text_input("👤 Employee ID", value="EMP001")
-    month = st.selectbox("📅 Month", ["2024-01", "2024-02", "2024-03", "2024-04"])
+    employee_id = st.text_input("👤 Employee ID", value=DEFAULT_EMPLOYEE_ID)
+    month = st.selectbox("📅 Month", ["2024-01", "2024-02", "2024-03", "2024-04"], index=3)
     quarter = st.selectbox("📆 Quarter", ["Q1-2024", "Q2-2024", "Q3-2024", "Q4-2024"])
+    year = st.selectbox("📅 Year", ["2024", "2023", "2025"])
 
     st.markdown("---")
     st.subheader("🐙 GitHub Settings")
@@ -86,6 +124,12 @@ with st.sidebar:
 
     st.markdown("---")
     fetch_btn = st.button("🚀 Fetch All MCP Data", type="primary")
+    clear_btn = st.button("🗑️ Clear Cache")
+    
+    if clear_btn:
+        st.session_state.mcp_data = {}
+        logger.info("Cache cleared by user")
+        st.success("Cache cleared!")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session state
@@ -99,35 +143,48 @@ if "chat_history" not in st.session_state:
 # Fetch MCP data on button click
 # ─────────────────────────────────────────────────────────────────────────────
 if fetch_btn:
-    with st.spinner("⚙️ Calling all 5 MCP tools..."):
-        data = {}
-        data["attendance"] = mcp.get_attendance(employee_id, month)
-        data["tasks"] = mcp.get_task_management(employee_id, quarter)
-        data["feedback"] = mcp.get_manager_feedback(employee_id, quarter)
-        data["training"] = mcp.get_training_certifications(employee_id)
-        if github_username:
-            data["github"] = mcp.get_github_performance(
-                github_username, github_token, days=90
-            )
-        st.session_state.mcp_data = data
-    st.success("✅ All MCP tools executed successfully!")
+    try:
+        with st.spinner("⚙️ Calling all MCP tools..."):
+            data = {}
+            logger.info(f"Fetching MCP data for employee: {employee_id}")
+            
+            data["attendance"] = mcp.get_attendance(employee_id, month)
+            data["tasks"] = mcp.get_task_management(employee_id, quarter)
+            data["feedback"] = mcp.get_manager_feedback(employee_id, quarter)
+            data["training"] = mcp.get_training_certifications(employee_id)
+            data["performance_summary"] = mcp.get_performance_summary(employee_id, quarter)
+            data["survey"] = mcp.get_employee_survey(employee_id, year)
+            
+            if github_username:
+                data["github"] = mcp.get_github_performance(
+                    github_username, github_token, days=90
+                )
+            
+            st.session_state.mcp_data = data
+            logger.info("All MCP tools executed successfully")
+        st.success("✅ All MCP tools executed successfully!")
+    except Exception as e:
+        logger.error(f"Error fetching MCP data: {e}")
+        st.error(f"❌ Error fetching data: {str(e)}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main header
 # ─────────────────────────────────────────────────────────────────────────────
 st.title("📊 Employee Performance Evaluation System")
-st.caption("Powered by RAG + 5 MCP Tools (Attendance · Tasks · Feedback · Training · GitHub)")
+st.caption("Powered by RAG + 7 MCP Tools (Attendance · Tasks · Feedback · Training · GitHub · Performance Summary · Survey)")
 st.markdown("---")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tabs
 # ─────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📅 Attendance",
     "✅ Task Management",
     "👨‍💼 Manager Feedback",
     "🎓 Training & Certs",
     "🐙 GitHub Performance",
+    "📈 Performance Summary",
+    "😊 Survey & Engagement",
     "💬 AI Assistant",
 ])
 
@@ -261,8 +318,44 @@ with tab5:
     else:
         st.info("Click **Fetch All MCP Data** in the sidebar to load GitHub data.")
 
-# ── Tab 6: AI Chat Assistant ─────────────────────────────────────────────────
+# ── Tab 6: Performance Summary ───────────────────────────────────────────────
 with tab6:
+    st.subheader("📈 Performance Summary Tool")
+    if "performance_summary" in d:
+        ps = d["performance_summary"]
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Overall Rating", f"{ps['overall_performance_rating']}/5.0")
+        col2.metric("Grade", ps["performance_grade"])
+        col3.metric("Quarter", ps.get("quarter", "N/A"))
+        st.info(f"🎯 {ps['recommendation']}")
+        with st.expander("📄 Raw JSON"):
+            st.json(ps)
+    else:
+        st.info("Click **Fetch All MCP Data** in the sidebar to load performance summary.")
+
+# ── Tab 7: Employee Survey ──────────────────────────────────────────────────
+with tab7:
+    st.subheader("😊 Employee Survey & Engagement Tool")
+    if "survey" in d:
+        sv = d["survey"]
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Engagement", f"{sv['engagement_score']}/5.0")
+        col2.metric("Work-Life Balance", f"{sv['work_life_balance_score']}/5.0")
+        col3.metric("Career Growth", f"{sv['career_growth_score']}/5.0")
+        col4.metric("NPS", sv["net_promoter_score"])
+        
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        col1.metric("Management Satisfaction", f"{sv['management_satisfaction']}/5.0")
+        col2.metric("Recommend Company", sv["would_recommend_company"])
+        
+        with st.expander("📄 Raw JSON"):
+            st.json(sv)
+    else:
+        st.info("Click **Fetch All MCP Data** in the sidebar to load survey data.")
+
+# ── Tab 8: AI Chat Assistant ─────────────────────────────────────────────────
+with tab8:
     st.subheader("💬 AI Assistant — RAG + MCP")
     st.caption("Ask anything about the employee. Live MCP data is automatically injected into the AI context.")
 

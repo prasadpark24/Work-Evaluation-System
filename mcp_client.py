@@ -132,6 +132,16 @@ class EmployeeMCPClient:
         """Fetch synthetic compensation data for an employee."""
         return self._call("get_compensation", {"employee_id": employee_id, "year": year})
 
+    # ── Tool 9 ──────────────────────────────────────────────────────────────
+    def get_performance_summary(self, employee_id: str, quarter: str = "Q1-2024") -> dict:
+        """Fetch overall performance summary for an employee."""
+        return self._call("get_performance_summary", {"employee_id": employee_id, "quarter": quarter})
+
+    # ── Tool 10 ─────────────────────────────────────────────────────────────
+    def get_employee_survey(self, employee_id: str, year: str = "2024") -> dict:
+        """Fetch employee satisfaction survey results."""
+        return self._call("get_employee_survey", {"employee_id": employee_id, "year": year})
+
     def get_full_evaluation(
         self,
         employee_id: str,

@@ -406,5 +406,54 @@ def get_compensation(employee_id: str, year: str = "2024") -> str:
     return json.dumps(data, indent=2)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TOOL 9 — Performance Summary
+# ─────────────────────────────────────────────────────────────────────────────
+@mcp.tool()
+def get_performance_summary(employee_id: str, quarter: str = "Q1-2024") -> str:
+    """
+    Generate an overall performance summary by aggregating key metrics.
+    Returns overall rating, strengths, and recommendations.
+    """
+    random.seed(employee_id + quarter + "summary")
+    metrics = [random.uniform(3.0, 5.0) for _ in range(6)]
+    avg_rating = round(sum(metrics) / len(metrics), 2)
+    
+    data = {
+        "tool": "Performance Summary Tool",
+        "employee_id": employee_id,
+        "quarter": quarter,
+        "overall_performance_rating": avg_rating,
+        "performance_grade": "A" if avg_rating >= 4.5 else "B" if avg_rating >= 3.5 else "C",
+        "recommendation": "High performer - consider promotion" if avg_rating >= 4.5 else "Solid performer - on track" if avg_rating >= 3.5 else "Needs improvement - coaching recommended",
+    }
+    return json.dumps(data, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TOOL 10 — Employee Survey
+# ─────────────────────────────────────────────────────────────────────────────
+@mcp.tool()
+def get_employee_survey(employee_id: str, year: str = "2024") -> str:
+    """
+    Fetch employee satisfaction survey results.
+    Returns engagement, work-life balance, and career growth scores.
+    """
+    random.seed(employee_id + year + "survey")
+    
+    data = {
+        "tool": "Employee Survey Tool",
+        "employee_id": employee_id,
+        "year": year,
+        "engagement_score": round(random.uniform(3.0, 5.0), 2),
+        "work_life_balance_score": round(random.uniform(2.5, 5.0), 2),
+        "career_growth_score": round(random.uniform(3.0, 5.0), 2),
+        "management_satisfaction": round(random.uniform(3.0, 5.0), 2),
+        "net_promoter_score": random.randint(0, 100),
+        "would_recommend_company": "Yes" if random.random() > 0.3 else "No",
+    }
+    return json.dumps(data, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     mcp.run(transport="stdio")
